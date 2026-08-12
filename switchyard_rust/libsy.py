@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from switchyard_rust._native import load_native
 
@@ -16,6 +16,8 @@ _EXPORTS = frozenset(
         "LibsyError",
         "LlmFallback",
         "LlmTarget",
+        "ModelCall",
+        "Step",
         "TaskClassifierConfig",
         "llm_task_classifier",
         "noop",
@@ -24,30 +26,51 @@ _EXPORTS = frozenset(
     }
 )
 
-
-class LlmClient(Protocol):
-    """Structural interface for a Python-hosted model client."""
-
-    async def call(
-        self,
-        request: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        """Call the configured target and return an aggregate neutral response."""
-        ...
-
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from typing import final
+    from collections.abc import AsyncIterator, Sequence
+    from typing import ClassVar, Literal, final
 
     class LibsyError(RuntimeError): ...
 
     @final
     class LlmTarget:
-        def __init__(self, name: str, client: LlmClient) -> None: ...
+        def __init__(self, name: str) -> None: ...
 
         @property
         def name(self) -> str: ...
+
+    @final
+    class ModelCall:
+        @property
+        def algorithm(self) -> str: ...
+
+        @property
+        def request(self) -> dict[str, object]: ...
+
+        @property
+        def decision(self) -> dict[str, object]: ...
+
+        def into_parts(self) -> tuple[dict[str, object], dict[str, object]]: ...
+
+        def respond(self, response: Mapping[str, object]) -> None: ...
+
+        def fail(self, error: BaseException) -> None: ...
+
+    class Step:
+        @final
+        class CallModel:
+            __match_args__: ClassVar[tuple[Literal["call"]]] = ("call",)
+            call: ModelCall
+
+        @final
+        class Decision:
+            __match_args__: ClassVar[tuple[Literal["decision"]]] = ("decision",)
+            decision: dict[str, object]
+
+        @final
+        class Done:
+            __match_args__: ClassVar[tuple[Literal["response"]]] = ("response",)
+            response: dict[str, object]
 
     @final
     class TaskClassifierConfig:
@@ -74,15 +97,20 @@ if TYPE_CHECKING:
 
     @final
     class Algorithm:
-        async def run(
+        def run_stream(
             self,
             request: Mapping[str, object],
             headers: Mapping[str, str] | None = None,
-        ) -> tuple[list[dict[str, object]], dict[str, object]]: ...
+        ) -> AsyncIterator[Step.CallModel | Step.Decision | Step.Done]: ...
 
     def noop() -> Algorithm: ...
 
-    def random(targets: Sequence[LlmTarget]) -> Algorithm: ...
+    def random(
+        targets: Sequence[LlmTarget],
+        *,
+        weights: Sequence[float] | None = None,
+        seed: int | None = None,
+    ) -> Algorithm: ...
 
     def llm_task_classifier(
         judge_target: LlmTarget,
@@ -115,4 +143,4 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [*sorted(_EXPORTS), "LlmClient"]
+__all__ = sorted(_EXPORTS)
